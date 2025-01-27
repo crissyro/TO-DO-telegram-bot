@@ -17,6 +17,14 @@ bot = Bot(token=os.getenv('BOT_TOKEN'))
 
 dp = Dispatcher()
 
+async def set_bot_commands():
+    await bot.set_my_commands([
+        types.BotCommand(command="/add", description="Добавить задачу"),
+        types.BotCommand(command="/list", description="Список задач"),
+        types.BotCommand(command="/delete", description="Удалить задачу"),
+        types.BotCommand(command="/help", description="Помощь"),
+    ])
+
 @dp.message(CommandStart())
 async def start_command(message: types.Message):
     await message.reply("📝 Добро пожаловать в To-Do List бот!\n"
@@ -25,7 +33,7 @@ async def start_command(message: types.Message):
                         "/list - показать список задач\n"
                         "/delete - удалить задачу\n"
                         "/help - справка")
-    
+    await set_bot_commands()
     logger.info(f"Команда /start от пользователя {message.from_user.id}")
     
 @dp.message(Command('help'))
@@ -35,9 +43,8 @@ async def help_command(message: types.Message):
                         "/list - показать все задачи\n"
                         "/delete - удалить задачу по номеру\n"
                         "/help - показать это сообщение")
-    
     logger.info(f"Команда /help от пользователя {message.from_user.id}")
-
+    
 async def main():
     logger.info('Start...')
     await bot.delete_webhook(drop_pending_updates=True)
