@@ -1,24 +1,12 @@
 import asyncio
-import os
-
-from aiogram import Bot, Dispatcher, types
+from aiogram import Dispatcher, types
 from aiogram.filters import CommandStart, Command
-import logging
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-bot = Bot(token=os.getenv('BOT_TOKEN'))
+from config.config import Config
 
 dp = Dispatcher()
 
 async def set_bot_commands():
-    await bot.set_my_commands([
+    await Config.bot.set_my_commands([
         types.BotCommand(command="/add", description="Добавить задачу"),
         types.BotCommand(command="/list", description="Список задач"),
         types.BotCommand(command="/delete", description="Удалить задачу"),
@@ -34,7 +22,7 @@ async def start_command(message: types.Message):
                         "/delete - удалить задачу\n"
                         "/help - справка")
     await set_bot_commands()
-    logger.info(f"Команда /start от пользователя {message.from_user.id}")
+    Config.logger.info(f"Команда /start от пользователя {message.from_user.id}")
     
 @dp.message(Command('help'))
 async def help_command(message: types.Message):
@@ -43,12 +31,12 @@ async def help_command(message: types.Message):
                         "/list - показать все задачи\n"
                         "/delete - удалить задачу по номеру\n"
                         "/help - показать это сообщение")
-    logger.info(f"Команда /help от пользователя {message.from_user.id}")
+    Config.logger.info(f"Команда /help от пользователя {message.from_user.id}")
     
 async def main():
-    logger.info('Start...')
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    Config.logger.info('Start...')
+    await Config.bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(Config.bot)
 
 if __name__ == '__main__':
     asyncio.run(main())
