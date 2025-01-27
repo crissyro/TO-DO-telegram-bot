@@ -1,15 +1,37 @@
 import asyncio
 from aiogram import Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from handlers.handlers import first_router
 from config.config import Config
+from database.database import init_db
 
-dp = Dispatcher()
+async def on_startup():
+    """Initialize database and perform startup actions"""
+    await init_db()
+    await Config.bot.delete_webhook(drop_pending_updates=True)
+    Config.logger.info("Bot started successfully")
+    
+async def on_shutdown(dp: Dispatcher):
+    """Handle graceful shutdown"""
+    Config.logger.info("Shutting down...")
+    await dp.storage.close()
+    await Config.bot.session.close()
+    Config.logger.info("Bot stopped successfully")
 
 async def main():
-    Config.logger.info('Start...')
+    """Main application entry point"""
+    dp = Dispatcher(storage=MemoryStorage())
+    
     dp.include_router(first_router)
-    await Config.bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(Config.bot)
+    
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    try:
+        Config.logger.info('Starting bot...')
+        await dp.start_polling(Config.bot)
+    finally:
+        await on_shutdown(dp)
 
 if __name__ == '__main__':
     asyncio.run(main())
