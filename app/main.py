@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 import logging
 
 from dotenv import load_dotenv
@@ -19,9 +19,24 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def start_command(message: types.Message):
-    await message.reply(f'Привет, {message.from_user.first_name}! Это простой бот, который отправляет текущую дату и время.')
+    await message.reply("📝 Добро пожаловать в To-Do List бот!\n"
+                        "Используйте команды:\n"
+                        "/add - добавить задачу\n"
+                        "/list - показать список задач\n"
+                        "/delete - удалить задачу\n"
+                        "/help - справка")
+    
     logger.info(f"Команда /start от пользователя {message.from_user.id}")
     
+@dp.message(Command('help'))
+async def help_command(message: types.Message):
+    await message.reply("ℹ️ Доступные команды:\n"
+                        "/add - добавить новую задачу\n"
+                        "/list - показать все задачи\n"
+                        "/delete - удалить задачу по номеру\n"
+                        "/help - показать это сообщение")
+    
+    logger.info(f"Команда /help от пользователя {message.from_user.id}")
 
 async def main():
     logger.info('Start...')
