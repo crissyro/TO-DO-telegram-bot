@@ -9,14 +9,11 @@ async def on_startup():
     """Initialize database and perform startup actions"""
     await init_db()
     await Config.bot.delete_webhook(drop_pending_updates=True)
-    Config.logger.info("Bot started successfully")
     
 async def on_shutdown(dp: Dispatcher):
     """Handle graceful shutdown"""
-    Config.logger.info("Shutting down...")
     await dp.storage.close()
     await Config.bot.session.close()
-    Config.logger.info("Bot stopped successfully")
 
 async def main():
     """Main application entry point"""
@@ -28,7 +25,6 @@ async def main():
     dp.shutdown.register(on_shutdown)
     
     try:
-        Config.logger.info('Starting bot...')
         await dp.start_polling(Config.bot)
     finally:
         await on_shutdown(dp)

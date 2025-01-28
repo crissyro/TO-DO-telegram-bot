@@ -1,8 +1,3 @@
-"""
-@package todo_bot
-@brief Main module for the To-Do List Telegram Bot
-"""
-
 from aiogram import F, Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -61,7 +56,6 @@ async def start_command(message: types.Message):
         reply_markup=main_kb()
     )
     await set_bot_commands()
-    Config.logger.info(f"/start command from user {message.from_user.id}")
 
 @first_router.message(Command('help'))
 async def help_command(message: types.Message):
@@ -82,7 +76,6 @@ async def help_command(message: types.Message):
         "/donate - Support the project"
     )
     await message.answer(help_text)
-    Config.logger.info(f"/help command from user {message.from_user.id}")
 
 @first_router.message(Command('add'))
 async def add_task_command(message: types.Message, state: FSMContext):
@@ -95,7 +88,6 @@ async def add_task_command(message: types.Message, state: FSMContext):
     """
     await message.answer("✏️ Please enter your task text:", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(TaskStates.waiting_for_task_text)
-    Config.logger.info(f"/add command from user {message.from_user.id}")
 
 @first_router.message(TaskStates.waiting_for_task_text)
 async def process_task_text(message: types.Message, state: FSMContext):
@@ -114,7 +106,6 @@ async def process_custom_date(message: types.Message, state: FSMContext):
         return
 
     try:
-        # Парсим дату без времени
         deadline_date = datetime.strptime(message.text, "%d.%m.%Y").date()
         deadline = datetime.combine(deadline_date, datetime.max.time())
         
@@ -156,49 +147,7 @@ async def process_deadline(message: types.Message, state: FSMContext):
         
     except Exception as e:
         await message.answer("⚠️ Failed to save task. Please try again.")
-        Config.logger.error(f"Error: {str(e)}")
         await state.clear()
-
-# @first_router.message(TaskStates.waiting_for_deadline)
-# async def process_deadline(message: types.Message, state: FSMContext):
-#     """
-#     @fn process_deadline
-#     @brief Processes deadline selection
-    
-#     @param message: Incoming message object
-#     @param state: Finite State Machine context
-#     """
-#     data = await state.get_data()
-    
-#     try:
-#         deadline = None
-#         if message.text == "Today 🕒":
-#             deadline = datetime.now().replace(hour=23, minute=59)
-#         elif message.text == "Tomorrow 📅":
-#             deadline = (datetime.now() + timedelta(days=1)).replace(hour=23, minute=59)
-#         elif message.text == "Custom date 📆":
-#             await message.answer("⌨️ Please enter date and time in format:\nDD.MM.YYYY HH:MM")
-#             return
-#         else:
-#             try:
-#                 deadline = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
-#             except ValueError:
-#                 await message.answer("❌ Invalid format! Use DD.MM.YYYY HH:MM")
-#                 return
-
-#         if deadline < datetime.now():
-#             raise ValueError("Deadline cannot be in the past")
-            
-#         await add_task(message.from_user.id, data['task_text'], deadline)
-#         await message.answer("✅ Task added successfully!", reply_markup=main_kb())
-        
-#     except ValueError as e:
-#         await message.answer(f"❌ Error: {str(e)}")
-#     except Exception as e:
-#         await message.answer("⚠️ Failed to save task. Please try again.")
-#         Config.logger.error(f"Database error: {str(e)}")
-#     finally:
-#         await state.clear()
 
 @first_router.message(Command('list'))
 async def list_tasks_command(message: types.Message):
@@ -228,40 +177,52 @@ async def list_tasks_command(message: types.Message):
         )
     except Exception as e:
         await message.answer("❌ Failed to load tasks. Please try again.")
-        Config.logger.error(f"Error loading tasks: {str(e)}")
 
 @first_router.message(Command('delete'))
 async def delete_task_command(message: types.Message, state: FSMContext):
     """
     @fn delete_task_command
-    @brief Initiates task deletion flow
+    @brief Initiates task deletion flow with back option
     
     @param message: Incoming message object
     @param state: Finite State Machine context
     """
-    await message.answer("❌ Enter task number to delete:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer(
+        "❌ Enter task number to delete or click Back:",
+        reply_markup=back_keyboard()
+    )
+    
     await state.set_state(TaskStates.waiting_for_task_number)
-    Config.logger.info(f"/delete command from user {message.from_user.id}")
-
+    
 @first_router.message(TaskStates.waiting_for_task_number)
 async def process_delete_task(message: types.Message, state: FSMContext):
     """
     @fn process_delete_task
-    @brief Processes task deletion
+    @brief Processes task deletion with enhanced error handling
     
     @param message: Incoming message object
     @param state: Finite State Machine context
     """
+    if message.text == "↩️ Back":
+        await message.answer("🏠 Returning to main menu.", reply_markup=main_kb())
+        await state.clear()
+        return
+
     try:
         position = int(message.text)
         if await delete_by_position(message.from_user.id, position):
             await message.answer("✅ Task deleted successfully!", reply_markup=main_kb())
+            await state.clear()
         else:
-            await message.answer("❌ Invalid task number!")
+            await message.answer(
+                "❌ Task number not found! Please try again:",
+                reply_markup=back_keyboard()
+            )
     except ValueError:
-        await message.answer("⚠️ Please enter a valid number!")
-    finally:
-        await state.clear()
+        await message.answer(
+            "⚠️ Please enter a valid number or click Back:",
+            reply_markup=back_keyboard()
+        )
 
 GITHUB_URL = "https://github.com/crissyro/TO-DO-telegram-bot"
 TELEGRAM_URL = "https://t.me/integral_cursed"
