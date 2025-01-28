@@ -1,39 +1,63 @@
+"""
+@package todo_bot
+@brief Main module for the To-Do List Telegram Bot
+"""
+
 from aiogram import F, Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.markdown import hlink
 from aiogram.fsm.state import State, StatesGroup
 
-from keyboards.keyboards import main_kb
+from keyboards.keyboards import back_keyboard, main_kb, deadline_keyboard
 from config.config import Config
-from database.database import add_task, get_all_tasks, delete_task  
+from database.database import add_task, get_tasks_with_numbers, delete_by_position
 from datetime import datetime, timedelta
 
 first_router = Router()
 
 class TaskStates(StatesGroup):
+    """
+    @class TaskStates
+    @brief Finite State Machine states for task management
+    
+    @var waiting_for_task_text: State for awaiting task description
+    @var waiting_for_deadline: State for awaiting task deadline
+    @var waiting_for_task_number: State for awaiting task number for deletion
+    """
     waiting_for_task_text = State()
     waiting_for_deadline = State()
-
-class AddTaskState(StatesGroup):
-    waiting_for_task_text = State()
-
-class DeleteTaskState(StatesGroup):
-    waiting_for_task_id = State()
+    waiting_for_custom_date = State()
+    waiting_for_task_number = State()
 
 async def set_bot_commands():
+    """
+    @fn set_bot_commands
+    @brief Sets up bot commands menu
+    
+    Configures the list of available commands in the Telegram bot menu
+    """
     await Config.bot.set_my_commands([
-        types.BotCommand(command="/contribute", description="Contributing into project-github repository"),
-        types.BotCommand(command="/review", description="Send a review to author"),
-        types.BotCommand(command="/donate", description="Donate"),
+        types.BotCommand(command="/add", description="Add new task"),
+        types.BotCommand(command="/list", description="Show all tasks"),
+        types.BotCommand(command="/delete", description="Delete task by number"),
+        types.BotCommand(command="/help", description="Show help"),
+        types.BotCommand(command="/contribute", description="Contribute to project"),
+        types.BotCommand(command="/review", description="Send feedback"),
+        types.BotCommand(command="/donate", description="Support the project")
     ])
 
 @first_router.message(CommandStart())
 async def start_command(message: types.Message):
-    """Handle /start command"""
+    """
+    @fn start_command
+    @brief Handles /start command
+    
+    @param message: Incoming message object
+    """
     await message.answer(
         "📝 Welcome to the To-Do List bot!\n"
-        "Use the menu on the left or the button below:",
+        "Use the menu on the left or the buttons below:",
         reply_markup=main_kb()
     )
     await set_bot_commands()
@@ -41,12 +65,17 @@ async def start_command(message: types.Message):
 
 @first_router.message(Command('help'))
 async def help_command(message: types.Message):
-    """Handle /help command"""
+    """
+    @fn help_command
+    @brief Handles /help command
+    
+    @param message: Incoming message object
+    """
     help_text = (
         "ℹ️ Available commands:\n"
         "/add - Add a new task\n"
         "/list - Show all tasks\n"
-        "/delete - Delete task by ID\n"
+        "/delete - Delete task by number\n"
         "/help - Show this message\n"
         "/contribute - Contribute to project\n"
         "/review - Send feedback\n"
@@ -57,121 +86,223 @@ async def help_command(message: types.Message):
 
 @first_router.message(Command('add'))
 async def add_task_command(message: types.Message, state: FSMContext):
-    """Handle /add command and initiate task creation flow"""
-    await message.answer("✏️ Please enter your task text:")
-    await state.set_state(AddTaskState.waiting_for_task_text)
-    Config.logger.info(f"/add command from user {message.from_user.id}")
+    """
+    @fn add_task_command
+    @brief Initiates task creation flow
     
-@first_router.message(AddTaskState.waiting_for_task_text)
+    @param message: Incoming message object
+    @param state: Finite State Machine context
+    """
+    await message.answer("✏️ Please enter your task text:", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(TaskStates.waiting_for_task_text)
+    Config.logger.info(f"/add command from user {message.from_user.id}")
+
+@first_router.message(TaskStates.waiting_for_task_text)
 async def process_task_text(message: types.Message, state: FSMContext):
-    """Process task text input and save to database"""
-    user_id = message.from_user.id
-    task_text = message.text
+    await state.update_data(task_text=message.text)
+    await message.answer(
+        "📅 Choose deadline:",
+        reply_markup=deadline_keyboard()
+    )
+    await state.set_state(TaskStates.waiting_for_deadline)
+    
+@first_router.message(TaskStates.waiting_for_custom_date)
+async def process_custom_date(message: types.Message, state: FSMContext):
+    if message.text == "↩️ Back":
+        await message.answer("📅 Choose deadline:", reply_markup=deadline_keyboard())
+        await state.set_state(TaskStates.waiting_for_deadline)
+        return
+
+    try:
+        # Парсим дату без времени
+        deadline_date = datetime.strptime(message.text, "%d.%m.%Y").date()
+        deadline = datetime.combine(deadline_date, datetime.max.time())
+        
+        if deadline.date() < datetime.now().date():
+            raise ValueError("The date cannot be in the past")
+            
+        data = await state.get_data()
+        await add_task(message.from_user.id, data['task_text'], deadline)
+        await message.answer("✅ Task added!", reply_markup=main_kb())
+        await state.clear()
+        
+    except ValueError as e:
+        await message.answer(f"❌ Error: {str(e)}\nUse format DD.MM.YYYY")
+
+@first_router.message(TaskStates.waiting_for_deadline)
+async def process_deadline(message: types.Message, state: FSMContext):
+    data = await state.get_data()
     
     try:
-        if len(task_text) > 500:
-            raise ValueError("Task text too long (max 500 characters)")
-            
-        success = await add_task(user_id, task_text)
-        
-        if success:
-            await message.answer("✅ Task added successfully!", reply_markup=main_kb())
-            Config.logger.info(f"New task added by user {user_id}")
+        if message.text == "Today 🕒":
+            deadline = datetime.now().replace(hour=23, minute=59)
+        elif message.text == "Tomorrow 📅":
+            deadline = (datetime.now() + timedelta(days=1)).replace(hour=23, minute=59)
+        elif message.text == "Custom date 📆":
+            await message.answer(
+                "⌨️ Please enter date and time in format:\nDD.MM.YYYY HH:MM\n"
+                "Example: 31.12.2024",
+                reply_markup=back_keyboard()
+            )
+            await state.set_state(TaskStates.waiting_for_custom_date)
+            return
         else:
-            await message.answer("❌ Failed to save task. Please try again.")
-            
-    except ValueError as ve:
-        await message.answer(f"❌ Validation error: {str(ve)}")
-        Config.logger.warning(f"Validation error for user {user_id}: {str(ve)}")
+            await message.answer("⚠️ Please use the selection buttons")
+            return
+
+        await add_task(message.from_user.id, data['task_text'], deadline)
+        await message.answer("✅ Task added successfully!", reply_markup=main_kb())
+        await state.clear()
         
     except Exception as e:
-        error_msg = "⚠️ Database error. Please try again later."
-        await message.answer(error_msg)
-        Config.logger.error(f"DB Error for user {user_id}: {str(e)}")
-        Config.logger.exception(e)
+        await message.answer("⚠️ Failed to save task. Please try again.")
+        Config.logger.error(f"Error: {str(e)}")
+        await state.clear()
+
+# @first_router.message(TaskStates.waiting_for_deadline)
+# async def process_deadline(message: types.Message, state: FSMContext):
+#     """
+#     @fn process_deadline
+#     @brief Processes deadline selection
     
-    await state.clear()
+#     @param message: Incoming message object
+#     @param state: Finite State Machine context
+#     """
+#     data = await state.get_data()
+    
+#     try:
+#         deadline = None
+#         if message.text == "Today 🕒":
+#             deadline = datetime.now().replace(hour=23, minute=59)
+#         elif message.text == "Tomorrow 📅":
+#             deadline = (datetime.now() + timedelta(days=1)).replace(hour=23, minute=59)
+#         elif message.text == "Custom date 📆":
+#             await message.answer("⌨️ Please enter date and time in format:\nDD.MM.YYYY HH:MM")
+#             return
+#         else:
+#             try:
+#                 deadline = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
+#             except ValueError:
+#                 await message.answer("❌ Invalid format! Use DD.MM.YYYY HH:MM")
+#                 return
+
+#         if deadline < datetime.now():
+#             raise ValueError("Deadline cannot be in the past")
+            
+#         await add_task(message.from_user.id, data['task_text'], deadline)
+#         await message.answer("✅ Task added successfully!", reply_markup=main_kb())
+        
+#     except ValueError as e:
+#         await message.answer(f"❌ Error: {str(e)}")
+#     except Exception as e:
+#         await message.answer("⚠️ Failed to save task. Please try again.")
+#         Config.logger.error(f"Database error: {str(e)}")
+#     finally:
+#         await state.clear()
 
 @first_router.message(Command('list'))
 async def list_tasks_command(message: types.Message):
-    """Handle /list command and show user's tasks"""
-    user_id = message.from_user.id
+    """
+    @fn list_tasks_command
+    @brief Displays user's tasks
     
+    @param message: Incoming message object
+    """
     try:
-        tasks = await get_all_tasks(user_id)
-        if not tasks:
-            await message.answer("📭 Your task list is empty!")
-            return
-            
-        tasks_list = "\n".join([f"{task.id}. {task.task}" for task in tasks])
-        await message.answer(f"📋 Your tasks:\n{tasks_list}")
-        Config.logger.info(f"Task list viewed by user {user_id}")
+        tasks = await get_tasks_with_numbers(message.from_user.id)
         
+        if not tasks:
+            return await message.answer("📭 Your task list is empty!")
+        
+        tasks_text = []
+        for num, task in tasks:
+            status = "⏳" if task.deadline > datetime.now() else "❗️OVERDUE"
+            tasks_text.append(
+                f"{num}. {task.task}\n"
+                f"   └─ Deadline: {task.deadline.strftime('%d.%m.%Y %H:%M')} {status}"
+            )
+        
+        await message.answer(
+            "📋 Your tasks:\n" + "\n\n".join(tasks_text),
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        await message.answer("❌ Error retrieving tasks. Please try again.")
-        Config.logger.error(f"Error retrieving tasks for user {user_id}: {str(e)}")
+        await message.answer("❌ Failed to load tasks. Please try again.")
+        Config.logger.error(f"Error loading tasks: {str(e)}")
 
 @first_router.message(Command('delete'))
 async def delete_task_command(message: types.Message, state: FSMContext):
-    """Handle /delete command and initiate task deletion flow"""
-    await message.answer("❌ Enter the ID of the task you want to delete:")
-    await state.set_state(DeleteTaskState.waiting_for_task_id)
+    """
+    @fn delete_task_command
+    @brief Initiates task deletion flow
+    
+    @param message: Incoming message object
+    @param state: Finite State Machine context
+    """
+    await message.answer("❌ Enter task number to delete:", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(TaskStates.waiting_for_task_number)
     Config.logger.info(f"/delete command from user {message.from_user.id}")
 
-@first_router.message(DeleteTaskState.waiting_for_task_id)
-async def process_task_id(message: types.Message, state: FSMContext):
-    """Process task ID input and delete from database"""
-    user_id = message.from_user.id
-    task_id = message.text
+@first_router.message(TaskStates.waiting_for_task_number)
+async def process_delete_task(message: types.Message, state: FSMContext):
+    """
+    @fn process_delete_task
+    @brief Processes task deletion
     
+    @param message: Incoming message object
+    @param state: Finite State Machine context
+    """
     try:
-        task_id = int(task_id)
-        success = await delete_task(task_id, user_id)
-        
-        if success:
-            await message.answer("🗑 Task deleted successfully!", reply_markup=main_kb())
-            Config.logger.info(f"Task {task_id} deleted by user {user_id}")
+        position = int(message.text)
+        if await delete_by_position(message.from_user.id, position):
+            await message.answer("✅ Task deleted successfully!", reply_markup=main_kb())
         else:
-            await message.answer("⚠️ Task not found or permission denied!")
-            Config.logger.warning(f"Failed deletion attempt by user {user_id} for task {task_id}")
-            
+            await message.answer("❌ Invalid task number!")
     except ValueError:
-        await message.answer("⚠️ Invalid input! Please enter a numeric task ID.")
-        Config.logger.warning(f"Invalid task ID input by user {user_id}: {task_id}")
-    except Exception as e:
-        await message.answer("❌ Error deleting task. Please try again.")
-        Config.logger.error(f"Error deleting task for user {user_id}: {str(e)}")
-    
-    await state.clear()
-    
+        await message.answer("⚠️ Please enter a valid number!")
+    finally:
+        await state.clear()
+
 GITHUB_URL = "https://github.com/crissyro/TO-DO-telegram-bot"
 TELEGRAM_URL = "https://t.me/integral_cursed"
 
 @first_router.message(Command('contribute'))
 async def contribute_command(message: types.Message):
-    """Handle /contribute command"""
+    """
+    @fn contribute_command
+    @brief Shows contribution information
+    
+    @param message: Incoming message object
+    """
     github_link = hlink("GitHub Repository", GITHUB_URL)
     response = (f"🎉 Feel free to contribute to the project!\n"
                 f"{github_link}\n\n"
                 "Your contributions are always welcome! 🌟")
     await message.answer(response, parse_mode="HTML")
-    Config.logger.info(f"/contribute command from {message.from_user.id}")
 
 @first_router.message(Command('review'))
 async def review_command(message: types.Message):
-    """Handle /review command"""
+    """
+    @fn review_command
+    @brief Provides feedback contact information
+    
+    @param message: Incoming message object
+    """
     telegram_link = hlink("Contact Author", TELEGRAM_URL)
     response = (f"📮 Send your feedback directly to the author:\n"
                 f"{telegram_link}\n\n"
                 "Your opinion matters! 💌")
     await message.answer(response, parse_mode="HTML")
-    Config.logger.info(f"/review command from {message.from_user.id}")
 
 @first_router.message(Command('donate'))
 async def donate_command(message: types.Message):
-    """Handle /donate command (placeholder)"""
+    """
+    @fn donate_command
+    @brief Shows donation information
+    
+    @param message: Incoming message object
+    """
     response = ("❤️ Thank you for wanting to support the project!\n\n"
                 "Currently we don't accept donations, but your active "
                 "use of the bot is the best reward! 🚀")
     await message.answer(response)
-    Config.logger.info(f"/donate command from {message.from_user.id}")
