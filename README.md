@@ -47,9 +47,8 @@
 ## 🎯 Usage
 
 🔹 `/add <task>` – Add a new task  
-🔹 `/list` – Show all tasks  
-🔹 `/done <task>` – Mark a task as completed  
-🔹 `/remove <task>` – Remove a task  
+🔹 `/list` – Show all tasks   
+🔹 `/delete <task>` – Remove a task  
 🔹 `/help` – Show available commands  
 
 ---
